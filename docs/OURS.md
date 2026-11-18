@@ -33,7 +33,9 @@ Also fixed (found while running it on `main`):
   file is now fine when `RELIC5_URL` is loopback; the hub's loopback door needs none.
 - `bin/relic5-push`: new `RELIC5_MEMORY=0` switch to skip copying `~/.claude*/projects/*/memory` notes (default is unchanged: on).
 
-Not touched: vectors/embeddings (GPU is a separate issue), the Hours and Family pages (their sources, odin-oracle and
+Vectors on our GPU are issue #4: see "Meaning search (vectors) on the RTX 4060" below.
+
+Not touched: the Hours and Family pages (their sources, odin-oracle and
 mother-oracle, are not public: those pages stay empty), `~/.claude`, `~/.oracle`, other houses' repos.
 
 Remaining mentions of Nat's names in `src bin cli/src deploy` are comments saying what upstream did.
@@ -165,3 +167,47 @@ bin/relic5-restore-test          # rebuilds a scratch hub from the newest snapsh
 
 The hub indexes every house's transcripts. Keep it on `127.0.0.1` (or our tailnet later, in its own issue). Never bind
 `0.0.0.0` or a public address.
+
+## Meaning search (vectors) on the RTX 4060 (issue #4)
+
+Nat's path, his model: `sentence-transformers` + `unsloth/embeddinggemma-300m` (model@hash
+`unsloth--embeddinggemma-300m@806f5f90`, 768 dims, doc prompt, max_seq 2048, float32, L2-normalised), on CUDA. WSL2 uses the
+Windows card through `/usr/lib/wsl/lib/libcuda.so`. Nothing is installed globally; torch lives in the repo venv. No Ollama in
+this path (bge-m3 there stays the fleet brain's). Mac/ANE/gb300 engines are untouched.
+
+What changed in code: `encode.py` (`cuda` device and `default_engine()`: `RELIC5_ENGINE`, else cuda, else mps; `RELIC5_DEVICE`
+forces a device, `RELIC5_BATCH` the batch), `worker.py` (`relic5 embed` off a Mac picks the local engine for any size; a hub that is
+this machine takes the shard by rename into `<RELIC5_ROOT>/vectors/` and runs `index --vectors` itself, with no ssh or docker; the
+parity probe no longer crashes on a hub with no vectors yet), `shim.py` (`relic5 mcp` embeds queries with the same engine).
+
+One time:
+
+```sh
+cd ~/ghq/github.com/Oraclep-World/relic5            # or a worktree of it
+uv sync --extra embed                               # torch 2.14.1+cu130 (the PyPI wheel on Linux is the CUDA build), sentence-transformers
+uv run python -c "import torch;print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"   # True NVIDIA GeForce RTX 4060
+# fill the Hugging Face cache once (needs the network; the model is public, ~1.2 GB)
+uv run python -c "from sentence_transformers import SentenceTransformer as S; S('unsloth/embeddinggemma-300m')"
+```
+
+After that every run is offline (`HF_HUB_OFFLINE=1` is set by `encode.py`).
+
+After each import (the hub must be up on `RELIC5_URL`; `relic5 embed` asks it which chunks have no vector):
+
+```sh
+uv run relic5 embed --limit 100000          # only the missing chunks; a few hundred take about a minute (model load is ~10 s)
+# it ships a shard to ~/relic5/vectors/<model@hash>/ and indexes in the background (RELIC5_EMBED_WAIT=1 to wait)
+uv run relic5 status | grep -A8 '"vectors"' # pending 0 = done
+```
+
+A `relic5 serve` that was already running keeps its old status/Map until it restarts or its caches expire (the Map is rebuilt in
+the background; it showed the previous generation for a minute). Restart it to see new vectors at once.
+
+Semantic search through MCP (the hub embeds nothing; the client adds the query vector): 
+`claude mcp add -s user relic5 -- <repo>/.venv/bin/relic5 mcp` (with `RELIC5_URL` as above). `semantic=true` then answers by meaning,
+with no "keyword hits" note. Without this shim, or with `relic5 mcp` on a machine without the `embed` extra, the hub falls back to words and says so.
+
+Measured on 18 Nov 2026 (RTX 4060 8 GB, WSL2, float32, batch 64, max_seq 2048, real chunks of 6 months of `main`):
+41,669 distinct chunks embedded in 1,979 s = **21 chunks/s** (one run, includes the ~10 s model load). Peak VRAM 7.9 GB of 8.2 GB, so
+embed while nothing else big is on the card. gb300's 1,411/s in the book is bf16 on a datacentre GPU: not comparable. If speed matters
+later: bf16 (not tried here; its vectors would need the parity probe against these), or a smaller max_seq.

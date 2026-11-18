@@ -1,10 +1,15 @@
-"""encode.py: embed text on a client (a Mac: MPS; anything else: CPU). The hub never runs this.
+"""encode.py: embed text on a client (a Mac: MPS; an NVIDIA box: CUDA; anything else: CPU). The hub never runs this.
 
 The settings must be the vectors' own, or the cosine means nothing: for gemma-300m@806f5f90 they are relic4's
 (agent-relic-v4 src/relic4/embed.py MODELS, PR #6 @b399119): doc_prompt "document", query_prompt "query",
 max_seq 2048, L2-normalised. Query encoding is relic4's core.Relic.encode: SentenceTransformer, prompt_name "query" when
 the model has it, normalize_embeddings=True. Needs the `embed` extra (sentence-transformers, torch); the model comes
 from the local Hugging Face cache (HF_HUB_OFFLINE=1, as relic4).
+
+Ours (issue #4): engine "cuda" is the same sentence-transformers path on an NVIDIA GPU (WSL2 sees the Windows card).
+The Mac/ANE engines are untouched. `default_engine()` picks: RELIC5_ENGINE if set, else cuda when torch sees a GPU,
+else mps (which falls to CPU where there is no MPS). float32 on every device, so the vectors are the model@hash's own.
+First run needs the network once to fill the Hugging Face cache; after that HF_HUB_OFFLINE=1.
 """
 import os
 from typing import TYPE_CHECKING, Iterable, TypedDict
@@ -32,7 +37,9 @@ def _model(model: str) -> "SentenceTransformer":
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         import torch
         from sentence_transformers import SentenceTransformer
-        dev = "mps" if torch.backends.mps.is_available() else "cpu"
+        dev = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        if os.environ.get("RELIC5_DEVICE"):   # force one (e.g. cpu, to keep the GPU free for another job)
+            dev = os.environ["RELIC5_DEVICE"]
         m = SentenceTransformer(MODELS[model]["name"], device=dev)
         m.max_seq_length = MODELS[model]["max_seq"]
         _cache[model] = m
@@ -59,11 +66,22 @@ def encode_ane(texts: list[str], model: str, kind: str = "query", batch: int = 6
     return out
 
 
+def default_engine() -> str:
+    """RELIC5_ENGINE, else cuda when this machine has a CUDA GPU (checked without loading a model), else mps."""
+    if os.environ.get("RELIC5_ENGINE"):
+        return os.environ["RELIC5_ENGINE"]
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "mps"
+    except ImportError:
+        return "mps"
+
+
 def encode(texts: Iterable[str], model: str, kind: str = "query", engine: str | None = None) -> list[list[float]]:
-    """-> list of unit vectors (lists of float). kind = query | document; engine = mps (sentence-transformers here,
-    the default) | ane (ANEEmbedBar on this Mac) | ane2 (Neural Engine + GPU in-process, ane2.py). RELIC5_ENGINE sets
+    """-> list of unit vectors (lists of float). kind = query | document; engine = cuda | mps (sentence-transformers here:
+    the device is cuda, else mps, else cpu; default_engine() picks) | ane (ANEEmbedBar on this Mac) | ane2 (Neural Engine + GPU in-process, ane2.py). RELIC5_ENGINE sets
     the default."""
-    engine = engine or os.environ.get("RELIC5_ENGINE", "mps")
+    engine = engine or default_engine()
     if engine == "ane2":
         from . import ane2
         return ane2.encode(list(texts), model, kind)
@@ -72,5 +90,5 @@ def encode(texts: Iterable[str], model: str, kind: str = "query", engine: str | 
     m = _model(model)
     p = MODELS[model]["query_prompt" if kind == "query" else "doc_prompt"]
     # prompt_name=None is encode's own default (its default prompt), the same as not passing it
-    return [v.tolist() for v in m.encode(list(texts), normalize_embeddings=True, batch_size=64,
+    return [v.tolist() for v in m.encode(list(texts), normalize_embeddings=True, batch_size=int(os.environ.get("RELIC5_BATCH", "64")),
                                          prompt_name=p if p in (m.prompts or {}) else None)]

@@ -38,6 +38,7 @@ def test_serve_forwards_and_reports_an_unreachable_hub(monkeypatch):
 def test_policy_chooses_by_backlog(tmp_path, monkeypatch):
     from relic5 import worker
     monkeypatch.setattr(worker, "CONFIG", str(tmp_path / "none.toml"))   # the defaults, not this machine's config
+    monkeypatch.setattr(worker.sys, "platform", "darwin")   # the ANE/gb300 policy is the Mac's; off a Mac see the next test
     assert worker.choose(810_000)[0] == "gb300" and worker.choose(1_200)[0] == "ane"
     cfg = tmp_path / "config.toml"
     cfg.write_text('[embed]\nbacklog_gb300 = 1000\nsmall = "mps"\n')
@@ -45,9 +46,41 @@ def test_policy_chooses_by_backlog(tmp_path, monkeypatch):
     assert worker.choose(1_200) == ("gb300", "backlog 1,200 > 1,000: gb300") and worker.choose(10)[0] == "mps"
 
 
+def test_off_a_mac_the_local_engine_does_every_size(tmp_path, monkeypatch):
+    """Ours (issue #4): no ANE and no gb300 here, so auto is the one sentence-transformers engine, at any backlog."""
+    from relic5 import worker
+    monkeypatch.setattr(worker, "CONFIG", str(tmp_path / "none.toml"))
+    monkeypatch.setattr(worker.sys, "platform", "linux")
+    monkeypatch.setenv("RELIC5_ENGINE", "cuda")
+    assert worker.choose(810_000)[0] == "cuda" and worker.choose(5)[0] == "cuda" and worker.query_engines() == ["cuda"]
+
+
+def test_default_engine_is_asked_then_cuda_then_mps(monkeypatch):
+    import relic5.encode as E
+    monkeypatch.setenv("RELIC5_ENGINE", "ane")
+    assert E.default_engine() == "ane"
+    monkeypatch.delenv("RELIC5_ENGINE")
+    assert E.default_engine() in ("cuda", "mps")
+
+
+def test_a_local_hub_takes_the_shard_without_ssh(tmp_path, monkeypatch):
+    from relic5 import worker
+    monkeypatch.delenv("RELIC5_HUB_SSH", raising=False)
+    monkeypatch.setenv("RELIC5_URL", "http://127.0.0.1:8795")
+    assert worker.hub_local()
+    monkeypatch.setenv("RELIC5_URL", "http://hub.example:8795")
+    assert not worker.hub_local()
+    monkeypatch.setenv("RELIC5_HUB_SSH", "local")
+    assert worker.hub_local()
+    monkeypatch.setattr(worker, "ROOT", str(tmp_path))
+    worker.note("start", "x")
+    assert (tmp_path / "logs" / "jobs.jsonl").read_text().count("\n") == 1
+
+
 def test_a_failed_query_embedding_is_said_in_the_reply(monkeypatch):
     """The fallback to keyword hits is never silent: the reason comes back in `note`, before the hub's own note."""
     import relic5.encode as E, relic5.worker as W
+    monkeypatch.setattr(W.sys, "platform", "darwin")
     monkeypatch.setattr(W, "policy", lambda: {"query": ["ane"]})
     def down(texts, model, engine):
         raise ConnectionError("ANE engine busy")
