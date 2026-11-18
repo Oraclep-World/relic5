@@ -2,8 +2,12 @@
 # A systemd *user* unit runs as the user who installs it (pleamvelli here), so there is no User= line.
 # From agent-relic-v3 hub/systemd/relic3-serve.service (6a6d9d8). The tokens live in ~/.config/relic5/tokens (0600),
 # never in this file; serve refuses to start without one.
+# Layout (Nat's): the code is a checkout of our fork at ~/relic5/app with its own .venv (`uv sync --no-dev`); the data
+# is ~/relic5 (index, parts). So %h/relic5/app/.venv/bin/relic5 below exists on `main`.
+#   git clone -b alpha https://github.com/Oraclep-World/relic5 ~/relic5/app && (cd ~/relic5/app && uv sync --no-dev)
 #   cp deploy/systemd/relic5-serve.service ~/.config/systemd/user/ && systemctl --user daemon-reload
 #   systemctl --user enable --now relic5-serve
+# Boot without a login needs lingering: loginctl enable-linger $USER (already on for pleamvelli).
 [Unit]
 Description=relic5 hub: MCP and read API for every machine (loopback for now)
 After=network-online.target tailscaled.service

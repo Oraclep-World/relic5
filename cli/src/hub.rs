@@ -42,7 +42,18 @@ fn token() -> Result<String, Fail> {
 
 /// GET <url><path>?<params> with the bearer token; the JSON body
 pub fn call(path: &str, params: &[(String, String)]) -> Result<Value, Fail> {
-    get(path, params, Some(token()?), 60)
+    // a hub on this machine needs no token on its loopback door (doors.py), so a missing token file is fine there
+    let tok = match token() {
+        Ok(t) => Some(t),
+        Err(_) if is_loopback(&url()) => None,
+        Err(e) => return Err(e),
+    };
+    get(path, params, tok, 60)
+}
+
+fn is_loopback(u: &str) -> bool {
+    let host = u.split("://").nth(1).unwrap_or(u).split(['/', ':']).next().unwrap_or("");
+    host == "127.0.0.1" || host == "localhost" || host == "[::1]"
 }
 
 /// The same without a token (the tailnet door needs none), shorter timeout: for the import's checks
