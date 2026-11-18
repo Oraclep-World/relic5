@@ -1,7 +1,7 @@
 """worker.py: `relic5 embed` on a client. Asks the hub which chunks have no vector, embeds them here, ships a shard.
 
   relic5 embed --probe [--n 200]        parity: re-embed n keys the hub already has; cosine of each with the stored vector
-  relic5 embed [--engine auto|ane|ane2|mps|gb300] [--limit 5000] [--prefix 0-7]   auto = the policy ([embed] in
+  relic5 embed [--engine auto|cuda|ane|ane2|mps|gb300] [--limit 5000] [--prefix 0-7]   auto = the policy ([embed] in
                                         ~/.config/relic5/config.toml): backlog > 2,500 -> gb300, else ane. Embeds missing
                                         chunks (newest first), rsyncs a shard, then
                                         `relic5 index --vectors` on the hub. --prefix: take only keys starting with one
@@ -9,18 +9,30 @@
 
 Shard: vectors/<model@hash>/<machine>-<engine>-<run>.parquet (key, vector) with parquet key-value metadata
 engine / precision / machine / at, and one embed job in the hub's jobs.jsonl (via `relic5 index --vectors`).
+cuda (ours, issue #4): the same sentence-transformers path on the NVIDIA GPU, float32; auto picks it off a Mac when torch
+sees a GPU. A hub that is this machine (hub_local) takes the shard by rename into <RELIC5_ROOT>/vectors/ and indexes here.
 Engines (Nat, 2026-10-23: "sometimes m5, sometimes gb300, sometimes ANE"): mps (here, float32), gb300 (relic4's
 remote_embed, bf16), ane (ANEEmbedBar 11435: other prompts, so its own model@hash unless the probe says otherwise).
 ane2 (ane2.py: ANEEmbedBar's packages in-process on the Neural Engine + float32 on the GPU, two processes; no app).
 """
-import json, os, socket, subprocess, sys, time, urllib.parse, urllib.request
+import json, os, shlex, shutil, socket, subprocess, sys, time, urllib.parse, urllib.request
 from typing import Callable, TypedDict
 
-from .encode import encode
+from .encode import default_engine, encode
 from .types_ import Json
 from . import store as rfs
 
+ROOT = os.path.expanduser(os.environ.get("RELIC5_ROOT", "~/relic5"))
 HUB = os.environ.get("RELIC5_HUB_SSH", "pleamvelli@main-wsl")
+
+
+def hub_local() -> bool:
+    """Ours (issue #4): this machine is the hub when RELIC5_HUB_SSH is "local", or is unset and RELIC5_URL is loopback.
+    Then a shard is moved into <RELIC5_ROOT>/vectors/ with no ssh to ourselves."""
+    if "RELIC5_HUB_SSH" in os.environ:
+        return os.environ["RELIC5_HUB_SSH"] in ("", "local")
+    host = urllib.parse.urlparse(os.environ.get("RELIC5_URL", "http://127.0.0.1:8795")).hostname or ""
+    return host in ("127.0.0.1", "localhost", "::1")
 RELIC4 = os.environ.get("RELIC5_RELIC4", "")   # upstream: /opt/Code/github.com/Soul-Brews-Studio/agent-relic-v4 (retired)
 CONFIG = os.path.expanduser(os.environ.get("RELIC5_CONFIG", "~/.config/relic5/config.toml"))
 # Nat, 2026-10-23: "all data huge go gb300, this month (smaller) ANE from m5". Overridden by [embed] in CONFIG.
@@ -53,12 +65,30 @@ def policy() -> Policy:
     return p
 
 
+def query_engines() -> list[str]:
+    """Engines for a semantic query, in order. The ANE is a Mac thing: elsewhere the one sentence-transformers engine."""
+    return policy()["query"] if sys.platform == "darwin" else [default_engine()]
+
+
 def choose(pending: int, p: Policy | None = None) -> tuple[str, str]:
-    """-> (engine, why): a big backlog goes to gb300, an increment to the small engine (ANE on m5)."""
+    """-> (engine, why): a big backlog goes to gb300, an increment to the small engine (ANE on m5).
+    Off a Mac there is no ANE and gb300 is disabled here: the local GPU (cuda) or CPU does every size."""
+    if sys.platform != "darwin" and p is None and "small" not in (tomllib_embed() or {}):
+        e = default_engine()
+        return e, f"{pending:,} chunks: {e} on this machine (no ANE, gb300 disabled)"
     p = p or policy()
     if pending > p["backlog_gb300"]:
         return p["big"], f"backlog {pending:,} > {p['backlog_gb300']:,}: {p['big']}"
     return p["small"], f"increment {pending:,}: {p['small']}"
+
+
+def tomllib_embed() -> dict[str, str]:
+    """The [embed] table of the config file, if any (a policy written there wins over the platform default)."""
+    if not rfs.exists(CONFIG):
+        return {}
+    import tomllib
+    res: dict[str, str] = tomllib.load(open(CONFIG, "rb")).get("embed", {})
+    return res
 
 
 def gb300(rows: list[Json], model: str) -> list[list[float]]:
@@ -97,6 +127,8 @@ def _get(url: str, path: str, **q: str | int) -> Json:
 def probe(url: str, model: str, n: int = 200, engine: str = "mps") -> Probe:
     """Re-embed n texts whose vectors the hub holds (from the seed); compare. -> {min, p05, mean}."""
     rows = _get(url, "/api/probe", model=model, n=n)["rows"]
+    if not rows:   # a hub with no vectors yet (the first embed): nothing to compare, nothing refused
+        return {"n": 0, "min": 0.0, "p05": 0.0, "mean": 0.0, "texts_per_s": None}
     t = time.time()
     mine = encode([r["text"] for r in rows], model, kind="document", engine=engine)
     secs = time.time() - t
@@ -134,6 +166,11 @@ def note(state: str, message: str, **kw: object) -> None:
     """One JobEvent in the hub's logs/jobs.jsonl: the policy decision and the outcome."""
     ev = {"job": f"embed-{socket.gethostname().split('.')[0].lower()}-{os.getpid()}", "verb": "embed", "state": state,
           "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "pid": os.getpid(), "host": socket.gethostname(), "message": message, **kw}
+    if hub_local():
+        os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)
+        with open(os.path.join(ROOT, "logs", "jobs.jsonl"), "a") as f:
+            f.write(json.dumps(ev) + "\n")
+        return
     subprocess.run(["ssh", "-o", "BatchMode=yes", HUB, "mkdir -p ~/relic5/logs && cat >> ~/relic5/logs/jobs.jsonl"],
                    input=json.dumps(ev) + "\n", text=True, timeout=30)
 
@@ -156,15 +193,30 @@ def run(url: str, model: str, limit: int = 5000, prefixes: str = "", engine: str
     name = f"{me}-{engine}-{run_id}.parquet"
     tmp = os.path.join(os.environ.get("TMPDIR", "/tmp"), name)
     tab = pa.table({"key": [r["key"] for r in rows], "vector": pa.array(vecs, type=pa.list_(pa.float32()))})
-    tab = tab.replace_schema_metadata({"engine": engine, "precision": {"mps": "float32", "ane": "w8a16", "ane2": "w8a16+float32", "gb300": "bfloat16"}.get(engine, engine),
+    tab = tab.replace_schema_metadata({"engine": engine, "precision": {"mps": "float32", "cuda": "float32", "ane": "w8a16", "ane2": "w8a16+float32", "gb300": "bfloat16"}.get(engine, engine),
                                        "machine": me, "at": time.strftime("%FT%T%z"), "model": model})
     pq.write_table(tab, tmp)
     dest = f"relic5/vectors/{model}/"
-    subprocess.run(["rsync", "-a", "--timeout=120", tmp, f"{HUB}:{dest}.{name}"], check=True)
     # publish by rename on the hub, so the index never reads half a shard
     # the vector tables rebuild on the hub after this returns (index --wait queues behind a running one); waiting
     # here made a 100-chunk embed a 60 s step (2026-10-24). RELIC5_EMBED_WAIT=1 keeps the old, blocking behaviour.
     # upstream's docker hub by default (white); a hub elsewhere sets RELIC5_HUB_INDEX_VECTORS (2026-11-13: hub on m5)
+    if hub_local():
+        # ours: this machine is the hub. Copy beside, rename in, then index here (no ssh, no docker)
+        d = os.path.join(ROOT, "vectors", model)
+        os.makedirs(d, exist_ok=True)
+        shutil.copyfile(tmp, os.path.join(d, "." + name))
+        os.replace(os.path.join(d, "." + name), os.path.join(d, name))
+        dest = d + "/"
+        index = os.environ.get("RELIC5_HUB_INDEX_VECTORS") or f"{shlex.quote(sys.executable)} -m relic5.cli index --root {shlex.quote(ROOT)} --vectors --wait"
+        if os.environ.get("RELIC5_EMBED_WAIT") == "1":
+            subprocess.run(index, shell=True, check=True)
+        else:
+            subprocess.Popen(index, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
+        os.remove(tmp)
+        log(f"embed: {len(rows):,} chunks on {engine} in {time.time() - t0:.0f}s -> {dest}{name}")
+        return len(rows)
+    subprocess.run(["rsync", "-a", "--timeout=120", tmp, f"{HUB}:{dest}.{name}"], check=True)
     index = os.environ.get("RELIC5_HUB_INDEX_VECTORS") or \
         "cd ~/relic5/app && docker compose run --rm index relic5 index --root /data --vectors --wait >/dev/null 2>&1"
     if os.environ.get("RELIC5_EMBED_WAIT") != "1":
@@ -180,7 +232,7 @@ def main(args: list[str]) -> None:
     model = _opt(args, "--model", "unsloth--embeddinggemma-300m@806f5f90")
     engine = _opt(args, "--engine", "auto")
     if "--probe" in args:
-        engine = "mps" if engine == "auto" else engine
+        engine = default_engine() if engine == "auto" else engine
         r = probe(URL, model, int(_opt(args, "--n", "200")), engine)
         print(f"parity {model} on {engine} ({r['texts_per_s']} texts/s) vs stored: n={r['n']} min={r['min']} p05={r['p05']} mean={r['mean']} "
               f"({'OK, > 0.99' if r['p05'] > 0.99 else 'NOT OK: these vectors need their own model@hash'})")

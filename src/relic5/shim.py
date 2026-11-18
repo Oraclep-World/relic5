@@ -42,8 +42,8 @@ def add_vector(msg: Json, encode: Encoder | None = None) -> Json:
         vec = encode([a.get("query", "")], a.get("model") or MODEL)[0]
     else:   # query engines in policy order (Nat: "can we do query embed ane too?"): ANE, then MPS, then keyword
         from .encode import encode as enc
-        from .worker import policy
-        for eng in policy()["query"]:
+        from .worker import query_engines
+        for eng in query_engines():
             try:
                 vec = enc([a.get("query", "")], a.get("model") or MODEL, engine=eng)[0]
                 break
