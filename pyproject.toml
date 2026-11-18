@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-embed = ["sentence-transformers==6.2.0", "torch==2.14.1", "transformers==5.20.2"]   # Mac clients only (encode.py)
+embed = ["sentence-transformers==6.2.0", "torch==2.14.1", "transformers==5.20.2"]   # upstream: Mac clients. Ours: also the CUDA box (the PyPI torch wheel on Linux x86 is the CUDA build). encode.py
 ane2 = ["coremltools==9.0"]   # engine ane2 (ane2.py): runs ANEEmbedBar's compiled packages in-process
 
 [dependency-groups]
