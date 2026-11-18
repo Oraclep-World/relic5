@@ -3,9 +3,9 @@
 # other"). Each account runs this as itself and copies the OTHER account's tree into its OWN home; nobody writes into the
 # other's home.
 #
-#   claude-sync /Users/nat/.claude      # as beta: nat's projects/ -> ~/.claude/projects/, nat's backups/ -> ~/.claude/backups/from-nat/
+#   claude-sync /Users/<other>/.claude # as <you>: <other>'s projects/ -> ~/.claude/projects/, nat's backups/ -> ~/.claude/backups/from-<other>/
 #   claude-sync /Users/beta/.claude     # as nat: the same the other way
-#   claude-sync -n /Users/nat/.claude   # dry run
+#   claude-sync -n /Users/<other>/.claude   # dry run
 #
 # Add-only: no --delete, and --update never replaces a file that is newer here (a session this account resumed and wrote
 # to stays this account's). A copied file keeps its mtime and size, so the other side's next run skips it: no ping-pong.

@@ -10,7 +10,7 @@
 
 The legacy file ~/.config/relic5/tokens (`<name> <secret>` lines, 2026-10-23) is still read, so nothing breaks;
 `relic5 token new` refuses a name already there. Most readers need no token at all (doors.py: loopback, Nat's own
-tailnet nodes); a token is for scripts and for nodes outside follow-rankine.
+tailnet nodes); a token is for scripts and for nodes outside the hub's tailnet.
 """
 import hashlib, hmac, json, os, re, secrets, time
 

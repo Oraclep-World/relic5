@@ -17,7 +17,7 @@
   relic5 gc [--json]              on the hub: what could be reclaimed (dry run only; nothing is deleted)
   relic5 eval [tests/eval/semantic.json] [--semantic]   recall@10 of a query file against the hub
   relic5 log [-n 30]              on the hub: the last event of each job (logs/jobs.jsonl, relic3's JobEvent)
-  relic5 serve [--root ~/relic5] [--host 127.0.0.1,100.103.52.67] [--port 8795]
+  relic5 serve [--root ~/relic5] [--host 127.0.0.1] [--port 8795]
   relic5 search <words> [--with tools] [--limit 20] [--since 7d] [--repo R] [--json]     any machine, over tailscale
   relic5 recap <session> [--limit 20|0] [--json]   what happened: turns asked, tools, files edited, how it ended
   relic5 show <uid | relic5://… | relic3://…> [--before 2] [--after 2]   one hit in full, with its neighbours
@@ -38,7 +38,7 @@
                                   (-f: keep following; --full: each whole message, not its first line)
   relic5 status [--json]
 
-Client settings: RELIC5_URL (default http://white.follow-rankine.ts.net:8795), RELIC5_TOKEN_FILE
+Client settings: RELIC5_URL (default http://127.0.0.1:8795), RELIC5_TOKEN_FILE
 (default ~/.config/relic5/token, 0600, the one line `relic5 token add` printed on the hub).
 Hub settings: RELIC5_ROOT (default ~/relic5), RELIC5_TOKENS (default ~/.config/relic5/tokens: `<machine> <token>` lines).
 """
@@ -50,9 +50,9 @@ from . import store as rfs
 
 ROOT = os.environ.get("RELIC5_ROOT", "~/relic5")
 TOKENS = os.environ.get("RELIC5_TOKENS", "~/.config/relic5/tokens")
-URL = os.environ.get("RELIC5_URL", "http://white.follow-rankine.ts.net:8795")
+URL = os.environ.get("RELIC5_URL", "http://127.0.0.1:8795")
 TOKEN_FILE = os.environ.get("RELIC5_TOKEN_FILE", "~/.config/relic5/token")
-PORT = 8795   # 8787, 8791 and 8792 are taken on white (2026-10-23)
+PORT = 8795   # 8787, 8791 and 8792 were taken on upstream's hub
 
 
 @overload
@@ -131,9 +131,14 @@ def serve(args: list[str]) -> None:
 
 
 def call(path: str, params: dict[str, str]) -> Json:
-    tok = open(os.path.expanduser(TOKEN_FILE)).read().strip()
+    try:
+        tok = open(os.path.expanduser(TOKEN_FILE)).read().strip()
+    except FileNotFoundError:   # no token file: fine against a hub on this machine, whose loopback door needs none (doors.py)
+        if urllib.parse.urlsplit(URL).hostname not in ("127.0.0.1", "localhost", "::1"):
+            raise
+        tok = ""
     url = URL.rstrip("/") + path + ("?" + urllib.parse.urlencode(params) if params else "")
-    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + tok})
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + tok} if tok else {})
     with urllib.request.urlopen(req, timeout=60) as r:
         out: Json = json.load(r)
         return out
@@ -284,9 +289,10 @@ def _main(argv: list[str] | None = None) -> None:
         known = None
         if "--all" not in rest:   # sessions some machine already holds are skipped (relic4-scan: import by session)
             # every LIVE machine's sessions; the import's own parts/relic3-import must not count, or a re-run skips everything
-            q = ("COPY (SELECT DISTINCT sid FROM read_parquet('/home/nat/relic5/parts/*/meta/sessions.parquet', filename = true) "
+            hub_root = os.environ.get("RELIC5_HUB_ROOT", "$HOME/relic5")   # expanded by the hub's shell (ssh), not here
+            q = (f"COPY (SELECT DISTINCT sid FROM read_parquet('{hub_root}/parts/*/meta/sessions.parquet', filename = true) "
                  "WHERE sid IS NOT NULL AND filename NOT LIKE '%-import/%') TO '/dev/stdout' (FORMAT csv, HEADER false)")
-            known = set(sp.run(["ssh", "-o", "BatchMode=yes", "nat@white.follow-rankine.ts.net", f'duckdb -c "{q}"'],
+            known = set(sp.run(["ssh", "-o", "BatchMode=yes", os.environ.get("RELIC5_HUB_SSH", "pleamvelli@main-wsl"), f'duckdb -c "{q}"'],
                                capture_output=True, text=True, check=True).stdout.split())
             print(f"known sessions on the hub: {len(known):,}")
         if rest[0] == "jsonl-truth":

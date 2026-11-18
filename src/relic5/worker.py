@@ -20,8 +20,8 @@ from .encode import encode
 from .types_ import Json
 from . import store as rfs
 
-HUB = os.environ.get("RELIC5_HUB_SSH", "nat@white.follow-rankine.ts.net")
-RELIC4 = os.environ.get("RELIC5_RELIC4", "/opt/Code/github.com/Soul-Brews-Studio/agent-relic-v4")
+HUB = os.environ.get("RELIC5_HUB_SSH", "pleamvelli@main-wsl")
+RELIC4 = os.environ.get("RELIC5_RELIC4", "")   # upstream: /opt/Code/github.com/Soul-Brews-Studio/agent-relic-v4 (retired)
 CONFIG = os.path.expanduser(os.environ.get("RELIC5_CONFIG", "~/.config/relic5/config.toml"))
 # Nat, 2026-10-23: "all data huge go gb300, this month (smaller) ANE from m5". Overridden by [embed] in CONFIG.
 class Policy(TypedDict):
@@ -64,6 +64,12 @@ def choose(pending: int, p: Policy | None = None) -> tuple[str, str]:
 def gb300(rows: list[Json], model: str) -> list[list[float]]:
     """relic4's remote_embed (agent-relic-v4 src/relic4/embed.py, PR #6 @b399119): gb300 GPU, bf16, 100k texts a round
     trip, resumable. Run in relic4's own venv with a scratch RELIC4_ROOT, so its shards land here, not in relic4's cache."""
+    # Disabled by default (issue #1): upstream's gb300 engine points at agent-relic-v4, which is retired, and gb300 is
+    # Nat's machine. The code below is kept (Nothing is Deleted). Set RELIC5_RELIC4 to a working relic4 checkout to use it.
+    if not RELIC4 or not os.path.exists(os.path.join(RELIC4, ".venv/bin/python")):
+        raise RuntimeError("relic5 embed: the gb300 engine is disabled on this hub (it needs relic4's remote_embed, "
+                           "agent-relic-v4, which is retired). Pick another engine (--engine mps|ane|ane2) or set RELIC5_RELIC4 "
+                           "to a relic4 checkout that has .venv/bin/python")
     import tempfile, pyarrow as pa, pyarrow.parquet as pq
     d = tempfile.mkdtemp(prefix="relic5-gb300-")
     # relic4 rsyncs each result shard into RELIC4_ROOT/vec/_cache/<model@hash>/ and does not create that folder:
@@ -158,7 +164,7 @@ def run(url: str, model: str, limit: int = 5000, prefixes: str = "", engine: str
     # publish by rename on the hub, so the index never reads half a shard
     # the vector tables rebuild on the hub after this returns (index --wait queues behind a running one); waiting
     # here made a 100-chunk embed a 60 s step (2026-10-24). RELIC5_EMBED_WAIT=1 keeps the old, blocking behaviour.
-    # white's docker hub by default; a hub elsewhere sets RELIC5_HUB_INDEX_VECTORS (2026-11-13: hub on m5)
+    # upstream's docker hub by default (white); a hub elsewhere sets RELIC5_HUB_INDEX_VECTORS (2026-11-13: hub on m5)
     index = os.environ.get("RELIC5_HUB_INDEX_VECTORS") or \
         "cd ~/relic5/app && docker compose run --rm index relic5 index --root /data --vectors --wait >/dev/null 2>&1"
     if os.environ.get("RELIC5_EMBED_WAIT") != "1":

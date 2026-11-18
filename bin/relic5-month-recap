@@ -14,8 +14,8 @@ event is logged there. Transcripts never leave the tailnet: the recap is not com
 import json, os, shutil, subprocess, sys, time, urllib.request
 from typing import Any
 
-HUB = os.environ.get("RELIC5_HUB_URL", "http://white.follow-rankine.ts.net:8795")
-HUB_SSH = os.environ.get("RELIC5_HUB_SSH", "nat@white.follow-rankine.ts.net")
+HUB = os.environ.get("RELIC5_HUB_URL", "http://127.0.0.1:8795")
+HUB_SSH = os.environ.get("RELIC5_HUB_SSH", "pleamvelli@main-wsl")
 OUT = os.path.expanduser(os.environ.get("RELIC5_RECAPS", "~/relic5-recaps"))
 TIMEOUT_MS = 45 * 60 * 1000
 TOOLS = "mcp__relic5__relic_search mcp__relic5__relic_sessions mcp__relic5__relic_session mcp__relic5__relic_show mcp__relic5__relic_status Write Read"

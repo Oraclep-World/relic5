@@ -2,8 +2,8 @@
 # relic5 install: put this machine's relic-scan, relic-extract and relic5-push on another machine, so every machine
 # runs the same versions (relic_status warns when they differ, from each push's _versions.json).
 #
-#   bin/relic5-install nat@mba.follow-rankine.ts.net            # copy, then print both sides' versions
-#   bin/relic5-install -n nat@mba.follow-rankine.ts.net         # only compare versions
+#   bin/relic5-install <user>@<host>            # copy, then print both sides' versions
+#   bin/relic5-install -n <user>@<host>         # only compare versions
 #
 # Binaries are copied only to the same OS and CPU (uname -sm): an arm64 Mac build runs on another arm64 Mac, not on
 # white (Linux x86_64), which needs its own build. Each replaced binary is kept as <name>.bak-<its old version>.

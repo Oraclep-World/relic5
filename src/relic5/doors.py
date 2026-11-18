@@ -1,16 +1,17 @@
-"""doors.py: who may read the hub without a token. Nat, 2026-10-23: "if localhost or vpn follow-rankine please bypass
-the password, i never let others join follow-rankine".
+"""doors.py: who may read the hub without a token. Upstream's rule (Nat, 2026-10-23, his own tailnet): "if localhost or
+vpn please bypass the password, i never let others join". The owner is read from tailscale at start-up, so on our
+hub it is our tailnet's owner; nothing here names a machine.
 
 A request comes in through one door, checked in this order, using the socket's addresses only (never X-Forwarded-For;
 uvicorn runs with proxy_headers=False):
   loopback          server and client are 127.0.0.1 / ::1 and the Host names this box (localhost, 127.0.0.1, [::1])
   tailnet:<node>    the client is a tailscale address (100.64.0.0/10) and `tailscale whois` says its owner is the
-                    hub's own owner (nat.wrw@gmail.com on follow-rankine). A node shared in from another tailnet
+                    hub's own owner (whoever `tailscale status` says owns this node). A node shared in from another tailnet
                     has another owner and still needs a token.
   token:<machine>   a Bearer token (or the UI cookie), one per machine, for anything else and for scripts
 Both tokenless doors also need a Host header that names the hub (its tailnet name, short name, tailnet IP or
 loopback), so a web page in a browser cannot reach the hub by DNS rebinding (relic4's Host check, api.py PR #5).
-Honest limit: no password inside follow-rankine; anyone who joins that tailnet as Nat can read everything.
+Honest limit: no password inside the hub's tailnet; anyone who joins it as the owner can read everything.
 """
 import ipaddress, json, socket, subprocess, time
 from collections.abc import Callable
@@ -46,7 +47,9 @@ def tailscale_self() -> tuple[str | None, set[str]]:
         s = d["Self"]
         name = s["DNSName"].rstrip(".")
         return d["User"][str(s["UserID"])]["LoginName"], {name, name.split(".")[0], *s.get("TailscaleIPs", [])}
-    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+    # TypeError/AttributeError: tailscale is installed but not logged in yet (status has "User": null, "Self": null);
+    # serve then runs with the loopback door only
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
         return None, set()
 
 

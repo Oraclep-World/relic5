@@ -3,7 +3,7 @@ use crate::py;
 use serde_json::Value;
 use std::time::Duration;
 
-pub const DEFAULT_URL: &str = "http://white.follow-rankine.ts.net:8795";
+pub const DEFAULT_URL: &str = "http://127.0.0.1:8795";
 
 pub fn url() -> String {
     std::env::var("RELIC5_URL").unwrap_or_else(|_| DEFAULT_URL.to_string())

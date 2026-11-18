@@ -1,5 +1,5 @@
 #!/bin/sh
-# relic5 offsite: copy the hub's data from white to relic5's own bucket in black's RustFS, so relic5 keeps a copy of
+# relic5 offsite: copy the hub's data to relic5's own S3 bucket (upstream: black's RustFS), so relic5 keeps a copy of
 # itself away from both white and m5 (Nat, 2026-10-24: "can we take care our self?"). black's nightly mirror-to-odin
 # copies the bucket on to odin, so the hub's data ends up on three boxes.
 #
@@ -15,12 +15,14 @@ set -u
 ROOT="${RELIC5_ROOT:-$HOME/relic5}"
 KEY="${RELIC5_S3_KEY:-$HOME/.config/relic5/s3-black}"
 BUCKET="${RELIC5_S3_BUCKET:-relic5-hub}"
-EP="${RELIC5_S3_ENDPOINT:-http://black.follow-rankine.ts.net:9200}"
-REGION="${RELIC5_S3_REGION:-black-ssd-rustfs}"
+# No default endpoint: upstream's was Nat's box (black). Offsite stays off until RELIC5_S3_ENDPOINT names ours.
+EP="${RELIC5_S3_ENDPOINT:-}"
+REGION="${RELIC5_S3_REGION:-us-east-1}"
 DIRS="${RELIC5_OFFSITE_DIRS:-parts vectors resolve logs attic}"
 STATUS_URL="${RELIC5_HUB_URL:-http://127.0.0.1:8795}/api/status"
 DRY=""
 [ "${1:-}" = "-n" ] && DRY="--dryrun"
+[ -n "$EP" ] || { echo "offsite is off: set RELIC5_S3_ENDPOINT to your S3 endpoint (no default; upstream's pointed at Nat's machine)" >&2; exit 2; }
 [ -r "$KEY" ] || { echo "no key at $KEY" >&2; exit 2; }
 AWS_ACCESS_KEY_ID=$(sed -n 1p "$KEY"); AWS_SECRET_ACCESS_KEY=$(sed -n 2p "$KEY"); export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 JOB="offsite-$(hostname -s)-$(date -u +%Y%m%d-%H%M%S)-$$"

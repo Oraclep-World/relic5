@@ -14,7 +14,7 @@ principle | learning | retro, with concepts. This router answers that API under 
   /graph        the same sample, each document linked to its two nearest neighbours by cosine
   /similar      nearest neighbours of a document's own vector
 
-Open it as studio.buildwithoracle.com/?host=https://white.follow-rankine.ts.net/arra (tailscale serve, HTTPS on the
+Open it as studio.buildwithoracle.com/?host=https://<hub>.<tailnet>.ts.net/arra (tailscale serve, HTTPS on the
 tailnet). Writes (learn, settings, login) answer read-only: relic5 is a record, not a notebook.
 """
 import random, re, threading, time

@@ -1,6 +1,6 @@
-# relic5 hub switch: white's :8795 forwards to the hub on m5 (Host rewritten). m5 sees every caller as white (nat),
+# relic5 hub switch: the primary's :8795 forwards to the standby hub (Host rewritten; @STANDBY_HOST@ and @HUB_TAILNET_IP@ are filled in by relic5-hub-switch). The standby sees every caller as the primary,
 # which its tailnet door admits without a token, so this door decides who may pass:
-#  - tailnet address 100.103.52.67: only nodes owned by the tailnet owner (filled in at switch time, minus the public
+#  - tailnet address @HUB_TAILNET_IP@: only nodes owned by the tailnet owner (filled in at switch time, minus the public
 #    droplet tailnet-gw); a node shared in from another tailnet gets 403, as it needs a token on the white hub today.
 #    No Cloudflare header either: if cloudflared ever targets white's tailnet IP, its source is white itself.
 #  - loopback 127.0.0.1 (white's running sessions still use http://127.0.0.1:8795/mcp): only local callers, Host loopback
@@ -11,7 +11,7 @@
 	auto_https off
 }
 http://:8795 {
-	bind 127.0.0.1 100.103.52.67
+	bind 127.0.0.1 @HUB_TAILNET_IP@
 	@owner {
 		remote_ip @OWNER_IPS@
 		not header Cf-Connecting-Ip *
@@ -22,14 +22,14 @@ http://:8795 {
 		not header Cf-Connecting-Ip *
 	}
 	handle @owner {
-		reverse_proxy http://m5.follow-rankine.ts.net:8795 {
-			header_up Host m5.follow-rankine.ts.net
+		reverse_proxy http://@STANDBY_HOST@:8795 {
+			header_up Host @STANDBY_HOST@
 			flush_interval -1
 		}
 	}
 	handle @local {
-		reverse_proxy http://m5.follow-rankine.ts.net:8795 {
-			header_up Host m5.follow-rankine.ts.net
+		reverse_proxy http://@STANDBY_HOST@:8795 {
+			header_up Host @STANDBY_HOST@
 			flush_interval -1
 		}
 	}

@@ -27,7 +27,7 @@ def _post(url: str, q: str, vector: list[float], limit: int, hybrid: bool = Fals
 def run(path: str, semantic: bool = False, url: str | None = None, limit: int = 10, model: str = "unsloth--embeddinggemma-300m@806f5f90",
         hybrid: bool = False) -> Json:
     spec = rfs.read_json(path)
-    url = (url or os.environ.get("RELIC5_URL", "http://white.follow-rankine.ts.net:8795")).rstrip("/")
+    url = (url or os.environ.get("RELIC5_URL", "http://127.0.0.1:8795")).rstrip("/")
     ok = 0
     rows: list[Row] = []
     vecs: dict[str, list[float]] = {}
