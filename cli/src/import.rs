@@ -141,7 +141,28 @@ pub fn main(args: &[String]) -> i32 {
     .unwrap_or_else(|| "relic5-push".into());
     let hub_url = hub::url();
     let hub_host = hub_url.split("://").nth(1).unwrap_or(&hub_url).split([':', '/']).next().unwrap_or("").to_string();
-    let hub_ssh = std::env::var("RELIC5_HUB_SSH").unwrap_or_else(|_| format!("nat@{hub_host}"));
+    // The hub's ssh target. A hub on this machine (loopback URL, the default) is "local": no ssh to itself.
+    // Elsewhere: RELIC5_HUB_SSH, else <RELIC5_HUB_USER or this user>@<the URL's host>. (Upstream's default was nat@<host>.)
+    let hub_ssh = std::env::var("RELIC5_HUB_SSH").unwrap_or_else(|_| {
+        if matches!(hub_host.as_str(), "127.0.0.1" | "localhost" | "::1" | "[::1]") {
+            "local".into()
+        } else {
+            let user = std::env::var("RELIC5_HUB_USER").or_else(|_| std::env::var("USER")).unwrap_or_default();
+            format!("{user}@{hub_host}")
+        }
+    });
+    // a command on the hub: `sh -c` when the hub is this machine, ssh otherwise
+    let on_hub = |cmd: &str| -> Command {
+        if hub_ssh == "local" {
+            let mut x = Command::new("sh");
+            x.args(["-c", cmd]);
+            x
+        } else {
+            let mut x = Command::new("ssh");
+            x.args(["-o", "BatchMode=yes", &hub_ssh, cmd]);
+            x
+        }
+    };
     let t0 = Instant::now();
     let start_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
@@ -185,14 +206,13 @@ pub fn main(args: &[String]) -> i32 {
     // what this push carries: the sync below waits for the hub to hold at least this much
     let pushed = mine(&c);
     c.stage("push", |c| run(c.cmd(&push)));
-    // the hub's index command over ssh: white's checkout by default; a hub elsewhere sets RELIC5_HUB_INDEX
+    // the hub's index command (ssh, or sh -c for a local hub): upstream's checkout on white by default; a hub elsewhere
+    // (ours: `main`, a local hub) sets RELIC5_HUB_INDEX, else a local hub runs `relic5 index --wait` from PATH
     // (2026-11-13: the hub on m5 has no ~/relic5/app, the step failed, and the sync below waited 3 min for nothing)
-    let index_cmd = std::env::var("RELIC5_HUB_INDEX").unwrap_or_else(|_| "~/relic5/app/.venv/bin/relic5 index --wait".into());
-    let (index_rc, index_out) = c.stage("index", |_| run({
-        let mut x = Command::new("ssh");
-        x.args(["-o", "BatchMode=yes", &hub_ssh, &index_cmd]);
-        x
-    }));
+    let index_cmd = std::env::var("RELIC5_HUB_INDEX").unwrap_or_else(|_| {
+        if hub_ssh == "local" { "relic5 index --wait".into() } else { "~/relic5/app/.venv/bin/relic5 index --wait".into() }
+    });
+    let (index_rc, index_out) = c.stage("index", |_| run(on_hub(&index_cmd)));
     if index_rc != 0 {
         c.log(&format!("{} index FAILED rc={index_rc} on {hub_ssh}: {}", stamp(), index_out.lines().last().unwrap_or("").trim()));
     }
@@ -239,8 +259,7 @@ pub fn main(args: &[String]) -> i32 {
     // showed an 08:09 MISMATCH after the 08:17 OK), so send it now, in relic5-push's shape.
     let line: String = verdict.chars().filter(|ch| *ch != '"' && *ch != '\\').collect();
     let body = format!("{{\"line\": \"{line}\", \"log\": \"{}\"}}\n", c.log.replace(['"', '\\'], ""));
-    let sent = Command::new("ssh")
-        .args(["-o", "BatchMode=yes", &hub_ssh, &format!("cat > relic5/parts/{machine}/_sync.json")])
+    let sent = on_hub(&format!("cd \"$HOME\" && cat > relic5/parts/{machine}/_sync.json"))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -250,7 +269,7 @@ pub fn main(args: &[String]) -> i32 {
             ch.wait()
         });
     if !matches!(sent, Ok(st) if st.success()) {
-        c.log("sync verdict not sent to the hub (ssh failed); the next push carries it");
+        c.log("sync verdict not sent to the hub (hub command failed); the next push carries it");
     }
 
     // the box
