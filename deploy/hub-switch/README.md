@@ -1,7 +1,7 @@
 # hub-switch: run the relic5 hub on m5, switch back to white any time
 
 Built 2026-11-13 (Nat: "make relic5 run on m5, just stop white and ready to switch back any time").
-Clients keep `RELIC5_URL=http://white.follow-rankine.ts.net:8795`; nothing changes on them.
+Clients keep `RELIC5_URL` (the primary hub's address); nothing changes on them.
 
 | File | Where it lives | What it does |
 |---|---|---|
