@@ -475,7 +475,7 @@ def make_app(root: str, tokens: "Tokens | dict[str, str]", doors: "Doors | None"
                 return Response(status_code=204 if h else 403, headers=h)
             d = who(request)
             if d is None:
-                return JSONResponse({"error": "relic5: open Studio on the tailnet (https://white.follow-rankine.ts.net/arra)"}, status_code=401, headers=h)
+                return JSONResponse({"error": "relic5: open Studio on the tailnet (RELIC5_ARRA_URL, e.g. https://main-wsl.<tailnet>.ts.net/arra)"}, status_code=401, headers=h)
             request.state.door = d
             seen.touch(d, *where(request), path)
             resp = await call_next(request)

@@ -46,7 +46,7 @@ COLS = ["uid", "msgkey", "chunk", "key", "month", "sid", "ts", "ts_th", "role", 
 HOME_COLS = ["home", "homes", "agent"]
 """Which .claude (or .codex) a row came from (Nat, 2026-10-25: "can we separate like .claude from user nat / .claude
 from user beta or .claude project of some project"): home is the last .claude*/.codex* folder before projects*,
-sessions or backups in relic-scan's src_path (/Users/beta/.claude, /Users/nat/.claude1, a project's own
+sessions or backups in relic-scan's src_path (/Users/<u>/.claude, /Users/<u>/.claude1, a project's own
 .../exp/.claude-hello/.claude); homes, every home that holds the message (a copy lives in several), newline-joined;
 agent, relic-scan's user@host. Tables built before this have none of them (index --force adds them)."""
 # with any folders under the home before projects/, sessions/ or a Claude project folder (-Users-...):

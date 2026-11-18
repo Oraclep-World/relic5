@@ -7,8 +7,8 @@ is a POSIX-style path after its scheme. The engines read S3 natively: DuckDB thr
 its object store (lance_options()).
 
   RELIC5_ROOT              /data, ~/relic5, or s3://bucket/prefix
-  RELIC5_S3_ENDPOINT       default http://black.follow-rankine.ts.net:9200 (black's RustFS)
-  RELIC5_S3_REGION         default black-ssd-rustfs
+  RELIC5_S3_ENDPOINT       default http://127.0.0.1:9200 (upstream: black's RustFS)
+  RELIC5_S3_REGION         default us-east-1 (upstream: black-ssd-rustfs)
   RELIC5_S3_KEY            a 0600 file: line 1 the access key, line 2 the secret (default ~/.config/relic5/s3-live);
                            or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 
@@ -63,8 +63,8 @@ def _s3_config() -> dict[str, str]:
             ak, sk = lines[0], lines[1]
         except (OSError, IndexError):
             pass
-    ep = os.environ.get("RELIC5_S3_ENDPOINT", "http://black.follow-rankine.ts.net:9200")
-    return {"access_key": ak, "secret_key": sk, "endpoint": ep, "region": os.environ.get("RELIC5_S3_REGION", "black-ssd-rustfs"),
+    ep = os.environ.get("RELIC5_S3_ENDPOINT", "http://127.0.0.1:9200")
+    return {"access_key": ak, "secret_key": sk, "endpoint": ep, "region": os.environ.get("RELIC5_S3_REGION", "us-east-1"),
             "scheme": ep.split("://")[0] if "://" in ep else "https", "host": ep.split("://")[-1].rstrip("/")}
 
 
