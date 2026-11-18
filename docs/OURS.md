@@ -63,14 +63,20 @@ All optional; the defaults are ours.
 One time:
 
 ```sh
-# 1. this repo
-cd ~/ghq/github.com/Oraclep-World/relic5            # or a worktree of it
-uv sync --no-dev
+# 1. the app: a checkout of our fork at ~/relic5/app (Nat's layout), with its own .venv. The service and `relic5 import`
+#    look for it there. Work on the code in a worktree of the usual checkout; update the app with git pull + uv sync.
+git clone -b alpha https://github.com/Oraclep-World/relic5 ~/relic5/app
+cd ~/relic5/app && uv sync --no-dev
+cargo install --locked --force --path cli --root ~/.local     # the Rust `relic5` (= `just cli-bin`; `just` is not installed)
 
 # 2. relic-extract from our fork, unmodified
 uv tool install git+https://github.com/Oraclep-World/relic-extract
 
-# 3. name the machine
+# 3. relic-scan from our fork, unmodified. It is a Rust crate, so `uv tool install` fails ("not a Python project");
+#    this is what install.sh does, pointed at our fork. Needs cargo.
+CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --locked --force --root ~/.local --git https://github.com/Oraclep-World/relic4-scan relic-scan
+
+# 4. name the machine
 mkdir -p ~/.config/relic5 && echo main > ~/.config/relic5/machine
 ```
 
@@ -86,9 +92,24 @@ uv run relic5 index --root ~/relic5 --wait          # manifests + BM25 tables
 uv run relic5 serve --root ~/relic5 --host 127.0.0.1 --port 8795
 ```
 
-`relic5 import` (the Rust CLI, `just cli`) does scan, extract, push, index, embed and sync in one go. On `main` it needs
-`relic-scan` on PATH and `RELIC5_HUB_INDEX="cd <checkout> && uv run relic5 index --root ~/relic5 --wait"`
-(or `relic5` on PATH). Its embed stage skips itself on Linux.
+### Import: the one command (manual, no cron, no timer)
+
+Nat runs import by hand ("go fully manual", 26 Oct). So do we. Run it whenever you want today's sessions in the hub:
+
+```sh
+RELIC5_MEMORY=0 RELIC5_CONFIG=0 RELIC5_GIT=0 \
+RELIC5_HUB_INDEX="$HOME/relic5/app/.venv/bin/relic5 index --root $HOME/relic5 --wait" \
+relic5 import
+```
+
+It does scan (`relic-scan run`, writes `~/.relic-scan`, which `/search-talk` reads: same path, same format), extract, push to
+`~/relic5/parts/main`, index, and sync. The three `RELIC5_*=0` keep memory notes, config files and git commits out: transcripts
+only. Embed skips itself on Linux (vectors are issue #4). The hub does not need a restart: serve reads the new index.
+
+Known: the sync stage prints `sync MISMATCH ... main: text|? ...`. Our `relic-extract` has no `status --json` yet (the sync
+check asks for it), and `thinking` and `tools` streams are off in its defaults, so the verdict can never be OK here. It is the
+check that is blind, not the data: compare `relic-extract status` (text chunks) with `/api/status` machines.main.text.rows;
+they were equal (58,088) after the first import.
 
 Check:
 
@@ -98,11 +119,40 @@ uv run relic5 search ferris --limit 3
 uv run relic5 status
 ```
 
-MCP (words only, no vectors): `claude mcp add --transport http relic5 http://127.0.0.1:8795/mcp`. The tool argument is `query`.
+### MCP for houses
 
-Run it as a service: `cp deploy/systemd/relic5-serve.service ~/.config/systemd/user/`, then edit its `ExecStart` to your
-checkout (`uv run relic5 serve ...` or a `.venv/bin/relic5`), `systemctl --user daemon-reload`,
-`systemctl --user enable --now relic5-serve`.
+The hub's `/mcp` serves the 29 `relic_*` tools. The loopback door needs no token, so a house on this machine connects with
+one line (words only, no vectors; the tool argument is `query`):
+
+```sh
+claude mcp add --transport http relic5 http://127.0.0.1:8795/mcp
+```
+
+That writes to the house's own config (add `-s user` for all projects). tinky runs it after review; nobody has added it yet.
+
+If a house should send a token anyway (the hub answers 401 to a wrong one), mint one on the hub, put it in
+`~/.config/relic5/token` (0600), and let `bin/relic5-mcp-headers` print the header so the token stays out of `~/.claude.json`:
+
+```sh
+~/relic5/app/.venv/bin/relic5 token new <house> --expires 90d     # secret shown once
+claude mcp add-json relic5 '{"type":"http","url":"http://127.0.0.1:8795/mcp","headersHelper":"'$HOME'/relic5/app/bin/relic5-mcp-headers"}'
+```
+
+Tested in a scratch dir: `tools/list` returned the 29 tools with no header and with the helper's header, and `relic_search`
+for `relic5` returned a hit from 18 Nov.
+
+### Run it as a service (systemd user unit)
+
+Layout: code at `~/relic5/app`, data at `~/relic5`. The unit's `ExecStart` is `%h/relic5/app/.venv/bin/relic5 serve --root %h/relic5
+--host 127.0.0.1 --port 8795`.
+
+```sh
+loginctl show-user $USER -p Linger                    # Linger=yes: user units start at boot without a login (on for pleamvelli)
+loginctl enable-linger $USER                          # if it said no
+mkdir -p ~/.config/systemd/user && cp ~/relic5/app/deploy/systemd/relic5-serve.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now relic5-serve
+systemctl --user is-active relic5-serve; curl -s 127.0.0.1:8795/health; ss -ltnp | grep 8795    # active, {"ok":true}, 127.0.0.1 only
+```
 
 Backup and restore test:
 
