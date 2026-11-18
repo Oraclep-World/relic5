@@ -4,7 +4,7 @@
 #
 #   bin/relic5-rule-check                                 # the tailscale rule, with its retired things
 #   bin/relic5-rule-check "tailscale only" netbird,wg0    # any phrase, comma-separated forbids
-#   RELIC5_HUB=http://white.follow-rankine.ts.net:8795 bin/relic5-rule-check ...
+#   RELIC5_HUB=http://127.0.0.1:8795 bin/relic5-rule-check ...
 #
 # Prints the triple, the restatements (date, repo, note, reachable then / now), the config sections that carry the
 # rule, the flagged notes with their reasons, and the search chains that dug for it. Read-only.
@@ -14,7 +14,7 @@ FORBIDS="${2:-netbird,wireguard,wg0,wg1,wg-quick,black.local,192.168.,10.10.0.,1
 # Dates the data cannot tell yet (candidates are unbound until #270): WireGuard stayed the production mesh until Nat's
 # 2026-10-22 order, though an April note already said "not WireGuard". RETIRED= (empty) derives every date.
 RETIRED="${RETIRED-wireguard=2026-10-22,wg0=2026-10-22,wg1=2026-10-22,wg-quick=2026-10-22,10.10.0.=2026-10-22,10.20.0.=2026-10-22}"
-HUB="${RELIC5_HUB:-http://white.follow-rankine.ts.net:8795}"
+HUB="${RELIC5_HUB:-http://127.0.0.1:8795}"
 curl -fsS -G "$HUB/api/rule" --data-urlencode "phrase=$PHRASE" --data-urlencode "forbids=$FORBIDS" --data-urlencode "retired=$RETIRED" > "${TMPDIR:-/tmp}/relic5-rule.$$.json"
 python3 - "${TMPDIR:-/tmp}/relic5-rule.$$.json" <<'PY'
 import json, sys

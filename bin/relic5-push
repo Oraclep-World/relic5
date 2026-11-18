@@ -1,14 +1,14 @@
 #!/bin/sh
 # relic5 push: copy this machine's relic-extract parts to the hub, under parts/<machine>/.
 #
-#   bin/relic5-push                         # RELIC5_HUB=nat@white.follow-rankine.ts.net, machine = short hostname
+#   bin/relic5-push                         # RELIC5_HUB=local (this machine is the hub), machine = short hostname
 #   RELIC5_MACHINE=mba bin/relic5-push      # name the machine yourself (or once: echo mba > ~/.config/relic5/machine)
 #   RELIC5_NEW_MACHINE=1 bin/relic5-push    # the first push of a new machine: the hub refuses an unknown name otherwise
 #   bin/relic5-push -n                      # dry run: list what would move, send nothing
 #
 # Ported from agent-relic-v3 hub/push.sh (commit 6a6d9d8). Kept from it: rsync over ssh, -a so mtimes travel
 # (an unchanged month is skipped; only grown months move), never --delete on the hub (a part pruned here stays on
-# the hub), and the realpath guard (white's /Users/nat is a symlink to /home/nat: a target that resolves
+# the hub), and the realpath guard (upstream's /Users/nat was a symlink to /home/nat: a target that resolves
 # somewhere else is refused, not merged into). Changed: it sends ~/.relic-extract streams, not raw transcripts,
 # and each machine lands in its own folder, so nothing from two machines ever shares a path.
 set -u
@@ -17,9 +17,11 @@ STAMP=                                          # set by bin/relic5-install on a
 # hub...). relic_status compares this, not the git hash, which differs after every commit (relic4-scan, 2026-10-23).
 PUSH_FORMAT=10
 # The ssh target. RELIC5_HUB_SSH wins; RELIC5_HUB may be the hub's HTTP url (relic-chain sets it for its SYNC check):
-# then the ssh target is nat@<its host>, not the url.
-HUB="${RELIC5_HUB_SSH:-${RELIC5_HUB:-nat@white.follow-rankine.ts.net}}"
-case "$HUB" in http://*|https://*) h=${HUB#*://}; h=${h%%/*}; HUB="nat@${h%%:*}";; esac
+# then the ssh target is ${RELIC5_HUB_USER:-$USER}@<its host> (a loopback url = local), not the url.
+# Default "local": the hub is this machine (`main`), same rsync with no ssh to itself. A loopback URL means local too.
+HUB="${RELIC5_HUB_SSH:-${RELIC5_HUB:-local}}"
+case "$HUB" in http://*|https://*) h=${HUB#*://}; h=${h%%/*}; h=${h%%:*}
+  case "$h" in 127.0.0.1|localhost) HUB=local;; *) HUB="${RELIC5_HUB_USER:-$USER}@$h";; esac;; esac
 # RELIC5_HUB=s3://bucket/prefix: the hub lives in a bucket (relic5 store.py). Every step below writes to a local
 # staging copy of this machine's folder exactly as it would to a hub over ssh, then only the files whose size or
 # mtime changed since the last push go up (aws s3 cp), and each job event is one object (S3 has no append).
@@ -31,8 +33,8 @@ case "$HUB" in s3://*)
   KEYF="${RELIC5_S3_KEY:-$HOME/.config/relic5/s3-push}"
   [ -r "$KEYF" ] || { echo "no S3 key at $KEYF (line 1 the key, line 2 the secret)" >&2; exit 2; }
   AWS_ACCESS_KEY_ID=$(sed -n 1p "$KEYF"); AWS_SECRET_ACCESS_KEY=$(sed -n 2p "$KEYF"); export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-  AWS_DEFAULT_REGION="${RELIC5_S3_REGION:-black-ssd-rustfs}"; export AWS_DEFAULT_REGION
-  EP="${RELIC5_S3_ENDPOINT:-http://black.follow-rankine.ts.net:9200}"
+  AWS_DEFAULT_REGION="${RELIC5_S3_REGION:-us-east-1}"; export AWS_DEFAULT_REGION
+  EP="${RELIC5_S3_ENDPOINT:-http://127.0.0.1:9200}"
   STAGE="${RELIC5_STAGE:-$HOME/.cache/relic5/push-stage}"
   mkdir -p "$STAGE" && STAGE=$(cd "$STAGE" && pwd -P)   # its real path: the symlink guard below compares real paths
   HUB=local ;;
@@ -168,6 +170,7 @@ fi
 # (/Users/Shared/nat-export/.claude, 2026-10-24: nat's notes, m5-nat retired). Their folder on the hub is
 # <parent>-<home> (nat-export-claude), so they never land on top of this account's "claude".
 for H in "$HOME"/.claude "$HOME"/.claude-* ${RELIC5_MEMORY_ROOTS:-}; do
+  [ "${RELIC5_MEMORY:-1}" = 0 ] && break   # RELIC5_MEMORY=0: do not copy memory notes (docs/OURS.md runs without them)
   [ -d "$H/projects" ] || continue
   name=$(basename "$H" | sed 's/^\.//')
   case " ${RELIC5_MEMORY_ROOTS:-} " in *" $H "*) name="$(basename "$(dirname "$H")")-$name" ;; esac

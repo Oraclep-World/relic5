@@ -1,8 +1,9 @@
 #!/bin/sh
-# relic5 backup: pull the hub's data from white into a dated snapshot on this machine (m5), hardlinked to the
+# relic5 backup: pull the hub's data into a dated snapshot on the backup machine (default ~/relic5-backup/main), hardlinked to the
 # previous snapshot, so a day costs only what changed.
 #
-#   bin/relic5-backup              # RELIC5_HUB_SSH=nat@white.follow-rankine.ts.net, into <backup volume>/white
+#   bin/relic5-backup              # RELIC5_HUB_SSH=local (this machine is the hub), into ~/relic5-backup/main
+#   RELIC5_HUB_SSH=user@host bin/relic5-backup   # a hub elsewhere, over ssh; RELIC5_BACKUP_DIR picks the target
 #   bin/relic5-backup -n           # dry run: say what would move
 #
 # Kept: parts (every machine's pushed history), vectors (hours of embedding to redo), resolve (relic3 links),
@@ -11,18 +12,23 @@
 # which relic_status shows as "last backup" and warns about after 36 h. The hub's row counts at backup time are
 # saved beside the data (hub-status.json), for bin/relic5-restore-test to compare against.
 set -u
-HUB="${RELIC5_HUB_SSH:-nat@white.follow-rankine.ts.net}"
+# "local" (the default): this machine is the hub (`main`), so no ssh to itself; anything else is an ssh target.
+HUB="${RELIC5_HUB_SSH:-local}"
 # a case-sensitive place on this machine (bin/relic5-backup-volume: the hub has folders that differ only by case)
-DEST="${RELIC5_BACKUP_DIR:-$("$(dirname "$0")/relic5-backup-volume")/white}" || { echo "no backup volume" >&2; exit 1; }
+DEST="${RELIC5_BACKUP_DIR:-$("$(dirname "$0")/relic5-backup-volume")/main}" || { echo "no backup volume" >&2; exit 1; }
 KEEP="${RELIC5_BACKUP_KEEP:-14}"            # newest snapshots kept; older ones are removed after a good run
 PARTS="${RELIC5_BACKUP_PARTS:-parts vectors resolve logs attic}"
-STATUS_URL="${RELIC5_BACKUP_STATUS_URL:-${RELIC5_HUB_URL:-http://white.follow-rankine.ts.net:8795}/api/status}"
-RSYNC=$(command -v /opt/homebrew/bin/rsync || command -v rsync)   # GNU rsync: --link-dest and --stats as below
+STATUS_URL="${RELIC5_BACKUP_STATUS_URL:-${RELIC5_HUB_URL:-http://127.0.0.1:8795}/api/status}"
+# GNU rsync (--link-dest, --stats): on a Mac the Homebrew one (the system rsync is too old), elsewhere the one on PATH
+RSYNC=$(command -v rsync || command -v /opt/homebrew/bin/rsync) || { echo "rsync not found" >&2; exit 1; }
+[ -x /opt/homebrew/bin/rsync ] && RSYNC=/opt/homebrew/bin/rsync
 DRY=""
 [ "${1:-}" = "-n" ] && DRY="-n"
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=10"
+# on the hub: hubsh <command>; HP is the rsync prefix of the hub's paths ("" when local)
+if [ "$HUB" = local ]; then hubsh() { sh -c "$1"; }; HP=""; else hubsh() { $SSH "$HUB" "$1"; }; HP="$HUB:"; fi
 
-home=$($SSH "$HUB" 'printf %s "$HOME"') || { echo "cannot reach $HUB" >&2; exit 1; }
+home=$(hubsh 'printf %s "$HOME"') || { echo "cannot reach $HUB" >&2; exit 1; }
 mkdir -p "$DEST" && chmod 700 "$DEST"
 NAME=$(date -u +%Y%m%d-%H%M%S)
 SNAP="$DEST/$NAME"
@@ -33,7 +39,7 @@ jobev() {   # state, extra JSON fields (no leading comma)
   [ -n "$DRY" ] && return 0
   line=$(printf '{"job": "%s", "verb": "backup", "state": "%s", "at": "%s", "pid": %s, "host": "%s", "message": "%s"%s}' \
     "$JOB" "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$(hostname -s)" "$2" "${3:+, $3}")
-  $SSH "$HUB" "mkdir -p \"\$HOME/relic5/logs\" && printf '%s\\n' '$line' >> \"\$HOME/relic5/logs/jobs.jsonl\"" || true
+  hubsh "mkdir -p \"\$HOME/relic5/logs\" && printf '%s\\n' '$line' >> \"\$HOME/relic5/logs/jobs.jsonl\"" || true
 }
 
 t0=$(date +%s)
@@ -42,7 +48,7 @@ rc=0
 sent=0
 mkdir -p "$SNAP.partial"
 for p in $PARTS; do
-  $SSH "$HUB" "test -e '$home/relic5/$p'" || continue
+  hubsh "test -e '$home/relic5/$p'" || continue
   link=""
   [ -n "$PREV" ] && [ -d "$PREV/$p" ] && link="--link-dest=$PREV/$p"
   # A push lands every 10 minutes, so a file can change while it is copied: try again (only what changed moves again);
@@ -50,7 +56,7 @@ for p in $PARTS; do
   # failures were not this: folders differing only by case, fixed by the case-sensitive volume above.)
   try=0
   while :; do
-    out=$("$RSYNC" -a $DRY --delete --timeout=300 --stats $link "$HUB:$home/relic5/$p/" "$SNAP.partial/$p/" 2>&1); r=$?
+    out=$("$RSYNC" -a $DRY --delete --timeout=300 --stats $link "$HP$home/relic5/$p/" "$SNAP.partial/$p/" 2>&1); r=$?
     [ $r -eq 0 ] || [ $r -eq 24 ] && break
     try=$((try + 1))
     [ $try -lt 3 ] || break
@@ -63,7 +69,7 @@ for p in $PARTS; do
 done
 # The token file (name + token lines, 0600): restoring the hub without it locks every client out.
 mkdir -p "$SNAP.partial/config"
-"$RSYNC" -a $DRY "$HUB:$home/.config/relic5/" "$SNAP.partial/config/" >/dev/null 2>&1 || { echo "no token file copied" >&2; rc=1; }
+"$RSYNC" -a $DRY "$HP$home/.config/relic5/" "$SNAP.partial/config/" >/dev/null 2>&1 || { echo "no token file copied" >&2; rc=1; }
 # Privacy by the directories (700), not by file modes: a changed mode would defeat --link-dest (every file copied).
 chmod 700 "$SNAP.partial"
 # What the hub counted when this was taken: the restore test rebuilds from the snapshot and must match these.

@@ -107,9 +107,19 @@ def test_local_hub_needs_no_ssh(env, tmp_path):
 
 def test_an_http_hub_url_means_ssh_to_its_host(env):
     src, hub, e = env
-    r = push(dict(e, RELIC5_HUB="http://hub:8795"))       # what relic-chain exports for its SYNC check
+    r = push(dict(e, RELIC5_HUB="http://hub:8795", RELIC5_HUB_USER="tester"))       # what relic-chain exports for its SYNC check
     assert r.returncode == 0, r.stderr
-    assert "-> nat@hub:" in r.stdout and (hub / "relic5/parts/m5/text/2026-10.parquet").exists()
+    assert "-> tester@hub:" in r.stdout and (hub / "relic5/parts/m5/text/2026-10.parquet").exists()
+
+
+def test_a_loopback_hub_url_means_local(env, tmp_path):
+    src, _, e = env
+    home = tmp_path / "selfhome"
+    home.mkdir()
+    e = dict(e, RELIC5_HUB="http://127.0.0.1:8795", HOME=str(home), PATH="/usr/bin:/bin:/opt/homebrew/bin")   # no fake ssh on PATH
+    r = push(e)
+    assert r.returncode == 0, r.stderr
+    assert "-> local:" in r.stdout and (home / "relic5/parts/m5/text/2026-10.parquet").exists()
 
 
 def test_push_sends_the_chain_sync_line(env, tmp_path):
